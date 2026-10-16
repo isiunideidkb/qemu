@@ -54,8 +54,8 @@ ram_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
     stat = false;
     return stat;
   }
-  //deleted __attribute((cleanup(g_free)))
-  const char* _name = host_memory_backend_get_name(backend);
+  
+  const char* __attribute((cleanup(g_free))) _name = host_memory_backend_get_name(backend);
   printf("[HACK.INFO] class: %s ptr: %p,size: %lu \n",_name,result.ptr,backend->size);
   memory_region_init_ram_ptr(&(backend->mr),OBJECT(backend),_name,backend->size,result.ptr);
   printf("=====[HACK END]===== \n");
