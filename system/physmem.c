@@ -365,7 +365,7 @@ static MemoryRegionSection *address_space_lookup_region(AddressSpaceDispatch *d,
 /* Called from RCU critical section */
 static MemoryRegionSection *
 address_space_translate_internal(AddressSpaceDispatch *d, hwaddr addr, hwaddr *xlat,
-                                 hwaddr *plen, bool resolve_subpage)
+                                 hwaddr *plen, bool resolve_subpage) //最后一个是is mmio
 {
     MemoryRegionSection *section;
     MemoryRegion *mr;

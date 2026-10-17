@@ -31,6 +31,7 @@ static bool
 ram_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
 {
 /* HACKED using a load memory region from an existing virt addr */
+ 
   if(!(backend->is_rpc))
     goto ori;
   bool stat = true;
@@ -55,23 +56,27 @@ ram_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
     return stat;
   }
   
-  const char* __attribute((cleanup(g_free))) _name = host_memory_backend_get_name(backend);
-  printf("[HACK.INFO] class: %s ptr: %p,size: %lu \n",_name,result.ptr,backend->size);
-  memory_region_init_ram_ptr(&(backend->mr),OBJECT(backend),_name,backend->size,result.ptr);
+  {
+    //__attribute((cleanup(g_free)))
+    const char* _name = host_memory_backend_get_name(backend);
+    printf("[HACK.INFO] class: %s ptr: %p,size: %lu \n",_name,result.ptr,backend->size);
+    memory_region_init_ram_ptr(&(backend->mr),OBJECT(backend),_name,backend->size,result.ptr);
+  }
+  
   printf("=====[HACK END]===== \n");
   return stat;
 
     
 ori:
 /* original code */
-    g_autofree char *name = NULL;
+    g_autofree const char* name = NULL;
+    name = host_memory_backend_get_name(backend);
     uint32_t ram_flags;
     if (!backend->size) {
         error_setg(errp, "can't create backend with size 0");
         return false;
     }
-
-    name = host_memory_backend_get_name(backend);
+    
     ram_flags = backend->share ? RAM_SHARED : RAM_PRIVATE;
     ram_flags |= backend->reserve ? 0 : RAM_NORESERVE;
     ram_flags |= backend->guest_memfd ? RAM_GUEST_MEMFD : 0;

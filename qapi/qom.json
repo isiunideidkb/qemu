@@ -665,8 +665,6 @@
 #     older to allow migration with newer QEMU versions.
 #     (default: false generally, but true for machine types <= 4.0)
 #
-# @is-rpc: 太痛苦了!
-#
 # .. note:: prealloc=true and reserve=false cannot be set at the same
 #    time.  With reserve=true, the behavior depends on the operating
 #    system: for example, Linux will not reserve swap space for shared
@@ -686,8 +684,70 @@
             '*share': 'bool',
             '*reserve': 'bool',
             'size': 'size',
+            '*x-use-canonical-path-for-ramblock-id': 'bool'} }
+
+
+##
+# @MemoryBackendRamProperties:
+#
+# Properties for objects of classes derived from memory-backend.
+#
+# @merge: if true, mark the memory as mergeable (default depends on
+#     the machine type)
+#
+# @dump: if true, include the memory in core dumps (default depends on
+#     the machine type)
+#
+# @host-nodes: the list of NUMA host nodes to bind the memory to
+#
+# @policy: the NUMA policy (default: 'default')
+#
+# @prealloc: if true, preallocate memory (default: false)
+#
+# @prealloc-threads: number of CPU threads to use for prealloc
+#     (default: 1)
+#
+# @prealloc-context: thread context to use for creation of
+#     preallocation threads (default: none) (since 7.2)
+#
+# @share: if false, the memory is private to QEMU; if true, it is
+#     shared (default false for backends memory-backend-file and
+#     memory-backend-ram, true for backends memory-backend-epc,
+#     memory-backend-memfd, and memory-backend-shm)
+#
+# @reserve: if true, reserve swap space (or huge pages) if applicable
+#     (default: true) (since 6.1)
+#
+# @size: size of the memory region in bytes
+#
+# @x-use-canonical-path-for-ramblock-id: if true, the canonical path
+#     is used for ramblock-id.  Disable this for 4.0 machine types or
+#     older to allow migration with newer QEMU versions.
+#     (default: false generally, but true for machine types <= 4.0)
+#
+# @is-rpc: hyw?
+#
+# .. note:: prealloc=true and reserve=false cannot be set at the same
+#    time.  With reserve=true, the behavior depends on the operating
+#    system: for example, Linux will not reserve swap space for shared
+#    file mappings -- "not applicable".  In contrast, reserve=false
+#    will bail out if it cannot be configured accordingly.
+#
+# Since: 2.1
+##
+{ 'struct': 'MemoryBackendRamProperties',
+  'data': { '*dump': 'bool',
+            '*host-nodes': ['uint16'],
+            '*merge': 'bool',
+            '*policy': 'HostMemPolicy',
+            '*prealloc': 'bool',
+            '*prealloc-threads': 'uint32',
+            '*prealloc-context': 'str',
+            '*share': 'bool',
+            '*reserve': 'bool',
+            'size': 'size',
             '*x-use-canonical-path-for-ramblock-id': 'bool',
-            'is-rpc': 'bool'} }
+            'is-rpc' : 'bool'} }
 
 ##
 # @MemoryBackendFileProperties:
@@ -1295,7 +1355,7 @@
       'memory-backend-file':        'MemoryBackendFileProperties',
       'memory-backend-memfd':       { 'type': 'MemoryBackendMemfdProperties',
                                       'if': 'CONFIG_LINUX' },
-      'memory-backend-ram':         'MemoryBackendProperties',
+      'memory-backend-ram':         'MemoryBackendRamProperties',
       'memory-backend-shm':         { 'type': 'MemoryBackendShmProperties',
                                       'if': 'CONFIG_POSIX' },
       'pr-manager-helper':          { 'type': 'PrManagerHelperProperties',
