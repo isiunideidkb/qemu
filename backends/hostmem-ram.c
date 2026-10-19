@@ -308,6 +308,10 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
   if(is_failure) {
     return false;
   }
+#else
+  if(is_init) {
+    return false;
+  }
 #endif
   __typeof__(init_ptr) cur_node = (__typeof__(init_ptr))init_ptr->next;
   struct __custom_table* prev_node = &head;
