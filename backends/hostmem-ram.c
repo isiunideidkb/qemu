@@ -286,6 +286,7 @@ rollback:
 /*
   trust the init_ptr,but do not trust the content
 */
+
 bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_init_monitor(struct {  void* next;  void* start_addr;  _Alignas(8) unsigned int length;}* init_ptr)
 //init_ptr never be NULL
 {
@@ -299,8 +300,8 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     "mfence \n\t"
     "jz 1f \n\t"
     "movb $1,%[is_failure] \n\t" //if the is_init = true,set is_failure = true
-    "1: \n\t" //if the is_init = false nothing happend
-    "nop \n\t" 
+    "1: \n\t" //if the is_init = false update the flag,if the function has no error,keep the flag true,otherwise the flag will turn back to false in the end
+    "movb $1,(%%rcx) \n\t"  //the the flag to true,this operation was preceded to keep the lock,!!NEED TO RELEASE at error point!!
     : [is_failure]"=rm"(is_failure)
     : [addr]"rm"(&is_init)
     : "rcx","dl","al","memory"
@@ -309,6 +310,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     return false;
   }
 #else
+  //by default,is_init are lazy.because of every call-in are serial
   if(is_init) {
     return false;
   }
@@ -386,12 +388,12 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_en
     "mov %[addr],%%rcx \n\t"
     "mov $0,%%al \n\t"
     "mov $1,%%dl \n\t"
-    "lock cmpxchgb %%dl,(%%rcx) \n\t" //modify al but discarded,will write 1 to (%rcx),needs unlock(set 0) before return but a setted the cleanup attribute
+    "lock cmpxchgb %%dl,(%%rcx) \n\t"
     "mfence \n\t"
     "jz 1f \n\t"
-    "movb $1,%[is_failure] \n\t" //if the is_init = true,set is_failure = true
-    "1: \n\t" //if the is_init = false nothing happend
-    "nop \n\t" 
+    "movb $1,%[is_failure] \n\t"
+    "1: \n\t"
+    "movb $1,(%%rcx) \n\t"  //set to 1 first
     : [is_failure]"=rm"(is_failure)
     : [addr]"rm"(_is_addr)
     : "rcx","dl","al","memory"
