@@ -364,7 +364,7 @@ static void custom_internal_cleanup(struct __custom_table* matched_node) {
 }
 
 //todo custom_request_enter_monitor monitor specificed addr(host virt addr) using memory_region_add_evnetfd call custom_request_notify for accepting an event
-bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_enter_monitor(void* addr,unsigned long long hwaddr) {
+bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_enter_monitor(void* addr) {
   if(!is_init) return false;
   if(global_rpc_mr == NULL) return false;
   struct __custom_table* __attribute__((cleanup(custom_internal_cleanup))) matched_node = NULL;
@@ -411,7 +411,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_en
   if(initial_ptr == NULL) {
     return false;
   }
-  unsigned long offset = ((unsigned long)addr - (unsigned long)initial_ptr)
+  unsigned long offset = ((unsigned long)addr - (unsigned long)initial_ptr);
   EventNotifier en;
   event_notifier_init(&en,0);
   memory_region_add_eventfd(global_rpc_mr,offset,1,true,0,&en);
