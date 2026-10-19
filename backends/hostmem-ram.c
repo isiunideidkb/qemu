@@ -307,6 +307,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     : "rcx","dl","al","memory"
   );
   if(is_failure) {
+    is_init = false;  
     return false;
   }
 #else
