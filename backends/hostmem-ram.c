@@ -376,6 +376,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_en
     }
     if(cur_node->start_addr == addr) {
       matched_node = cur_node;
+      break;
     }
     cur_node = cur_node->next;
   }
