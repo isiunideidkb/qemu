@@ -22,7 +22,6 @@
 #include "qemu/event_notifier.h"
 #include <poll.h>
 #include <unistd.h>
-#include <stdint.h>
 #ifndef __unix__
 #error "this hack only works at unix-like OS"
 #endif
@@ -283,12 +282,16 @@ rollback:
 }
 
 
+
+//todo request memory map/unmap
+
+
 /*
   trust the init_ptr,but do not trust the content
 */
 
-bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_init_monitor(struct {  void* next;  void* start_addr;  _Alignas(8) unsigned int length;}* init_ptr)
-//init_ptr never be NULL
+bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_init_monitor(struct {  void* next;  void* start_addr;  _Alignas(8) char ignoreme; _Alignas(8) char ignoreme2 }* init_ptr)
+//init_ptr never be NULL,ignore the length(ptr) and type
 {
 #ifdef _CONCURRENCY_ASSHOLE
    bool is_failure = false;
@@ -319,7 +322,6 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
   __typeof__(init_ptr) cur_node = (__typeof__(init_ptr))init_ptr->next;
   struct __custom_table* prev_node = &head;
   head.next = NULL;
-  head.length = init_ptr->length;
   head.start_addr = init_ptr->start_addr;
   head.is_monitored = false;
   while(true) {
@@ -335,7 +337,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     }
     new_node->start_addr = cur_node->start_addr;
     new_node->next = NULL;
-    new_node->length = cur_node->length;
+
     new_node->is_monitored = false;
 
     cur_node = (__typeof__(init_ptr))cur_node->next;
@@ -343,7 +345,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     prev_node = new_node;
   }
   if(custom_internal_check_qemu()) {
-    is_init = true;
+    is_init = true; //set lazily if it isn't concurrent
     return true;
   }
   else {
@@ -365,7 +367,7 @@ static void custom_internal_cleanup(struct __custom_table* matched_node) {
 }
 
 //todo custom_request_enter_monitor monitor specificed addr(host virt addr) using memory_region_add_evnetfd call custom_request_notify for accepting an event
-bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_enter_monitor(void* addr) {
+bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_inhabit_monitor(void* addr) {
   if(!is_init) return false;
   if(global_rpc_mr == NULL) return false;
   struct __custom_table* __attribute__((cleanup(custom_internal_cleanup))) matched_node = NULL;
