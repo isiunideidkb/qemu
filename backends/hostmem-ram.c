@@ -131,15 +131,15 @@ ram_backend_object_init(Object* obj)
     hack_host_memory_backend_set_bool);
   object_property_set_description(obj, "is-rpc",
     "请输入文本 hyw 笑点解析,,,");
-  HostMemoryBackendClass *backend = MEMORY_BACKEND(obj);  
+  HostMemoryBackend *backend = MEMORY_BACKEND(obj);
+  //mr的生命周期是父类型管的 不需要ref/unreef
   global_rpc_mr = &(backend->mr);
 }
 
 static void
 ram_backend_object_finalize(Object obj)
 {
-  HostMemoryBackend* backend = MEMORY_BACKEND(obj);
-  memory_unref(&(backend->mr));
+  HostMemoryBackend* backend = MEMORY_BACKEND(obj);  
   global_rpc_mr = nullptr;
   return;
 }
@@ -304,7 +304,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     "jz 1f \n\t"
     "movb $1,%[is_failure] \n\t" //if the is_init = true,set is_failure = true
     "1: \n\t" //if the is_init = false update the flag,if the function has no error,keep the flag true,otherwise the flag will turn back to false in the end
-    "movb $1,(%%rcx) \n\t"  //the the flag to true,this operation was preceded to keep the lock,!!NEED TO RELEASE at error point!!
+    "movb $1,(%%rcx) \n\t"  //the the flag to true,this operation was preceded,was intended to keep the lock,!!NEED TO RELEASE at error point!!
     : [is_failure]"=rm"(is_failure)
     : [addr]"rm"(&is_init)
     : "rcx","dl","al","memory"
@@ -330,7 +330,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
     }
     struct __custom_table* new_node = malloc(sizeof(struct __custom_table));
     if(new_node == NULL) {
-#ifdef _CONCURRENCY_ASSHOLE //in this case is_init is always true,but failured ,thus, unlock the flag,change state to init-able
+#ifdef _CONCURRENCY_ASSHOLE //in this case is_init is always true,but failured ,thus, unlock the flag MANUALLY
       is_init = false;
 #endif
       return false;
