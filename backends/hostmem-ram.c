@@ -18,6 +18,8 @@
 #include "qom/object_interfaces.h"
 #include "system/memory.h"
 #include "system/address-spaces.h"
+#include "system/ram_addr.h"
+#include "exec/hwaddr.h"
 #include <dlfcn.h>
 #include "qemu/event_notifier.h"
 #include <poll.h>
@@ -27,7 +29,7 @@
 #endif
 
 #pragma message "you're compiling hacked hostmem-ram.c Linux/Unixes only"
-static MemoryRegion* global_rpc_mr = nullptr;
+static MemoryRegion* global_rpc_mr = NULL;
 
 typedef struct { void* ptr; _Alignas(8) unsigned short err_code; } (*cust_rq_t)(unsigned long);
 static bool
@@ -64,7 +66,6 @@ ram_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
     const char* _name = host_memory_backend_get_name(backend);
     printf("[HACK.INFO] class: %s ptr: %p,size: %lu \n",_name,result.ptr,backend->size);
     memory_region_init_ram_device_ptr(&(backend->mr),OBJECT(backend),_name,backend->size,result.ptr);
-    memory_ref(&(backend->mr));
   }
   
   printf("=====[HACK END]===== \n");
@@ -73,7 +74,10 @@ ram_backend_memory_alloc(HostMemoryBackend *backend, Error **errp)
     
 ori:
 /* original code */
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wattributes"
     g_autofree const char* name = NULL;
+#pragma GCC diagnostic pop    
     name = host_memory_backend_get_name(backend);
     uint32_t ram_flags;
     if (!backend->size) {
@@ -137,10 +141,10 @@ ram_backend_object_init(Object* obj)
 }
 
 static void
-ram_backend_object_finalize(Object obj)
+ram_backend_object_finalize(Object* obj)
 {
-  HostMemoryBackend* backend = MEMORY_BACKEND(obj);  
-  global_rpc_mr = nullptr;
+//  HostMemoryBackend *backend = MEMORY_BACKEND(obj);
+  global_rpc_mr = NULL;
   return;
 }
 static const TypeInfo ram_backend_info = {
@@ -160,45 +164,49 @@ type_init(register_types);
 
 
 
+#pragma GCC diagnostic push
+
+#pragma GCC diagnostic ignored "-Wmissing-prototypes"
+#pragma GCC diagnostic ignored "-Wattributes"
+#pragma GCC diagnostic ignored "-Wstrict-prototypes"
+#pragma GCC diagnostic ignored "-Wold-style-definition"
+
 
 /*
   -1 cannot map,boncebuffer copy happend
   0 false
   1 ok
 */
-char __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_memory_map(void* hw_addr,
+char __attribute__((visibility("default"),sysv_abi)) custom_memory_map(void* hw_addr,
                                                               void** addr_out,
                                                               unsigned long* plength_out,
                                                               bool is_write)
 {
   MemTxAttrs attrs = MEMTXATTRS_UNSPECIFIED;
   AddressSpace* as = &address_space_memory;
-  AddressSpace _empty_example;
+  AddressSpace _empty_example = { 0 };
   memset(&_empty_example,0,sizeof(AddressSpace));
-  MemoryRegion* final_flatview_mr;
-  FlatView* fv;
-  unsigned long len = *plength_out;
-  unsigned long _xlat,l; //these are temp out param
-  l = len;
   if(memcmp(as,&_empty_example,sizeof(AddressSpace)) == 0) {
     printf("[WARN] address_space_memory is nullptr\n");
     return 0;
   }
-  if(len == 0 || hw_addr == NULL) {
+  if(*plength_out == 0 || hw_addr == NULL) {
     return 0;
   }
-  RCU_READ_LOCK_GUARD();
-  fv = address_space_to_flatview(as);
-  final_flatview_mr = flatview_translate(fv,hw_addr,&_xlat,&l,is_write,attrs);
-  if(!memory_access_is_direct(final_flatview_mr,is_write,attrs)) {
-    printf("[WARN] coping happend \n");
+  void* tmp_addr = address_space_map(as,(hwaddr)hw_addr,plength_out,is_write,attrs);
+  ram_addr_t offset = 0;
+  MemoryRegion* pmr = memory_region_from_host(tmp_addr,&offset);
+  if(!pmr)
+    return 0;
+  if(memory_access_is_direct(pmr,is_write,attrs)) {
+    *addr_out = tmp_addr;
+  }
+  else {
+    printf("[WARN] cannot direct access,skipping\n");  
+    address_space_unmap(as,tmp_addr,*plength_out,is_write,0ul);
+    *addr_out = NULL;
     return -1;
   }
-  memory_region_ref(final_flatview_mr);
-  *plength_out = flatview_extend_translation(fv, hw_addr, len, final_flatview_mr, _xlat,
-                                             l, is_write, attrs);
-  fuzz_dma_read_cb(hw_addr, *plength_out, final_flatview_mr);
-  *addr_out = qemu_ram_ptr_length(final_flatview_mr->ram_block, _xlat, plength_out, true, is_write);
   return 1;
 }
 
@@ -210,7 +218,7 @@ char __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_memory_map
   1 ok
 
 */
-char __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_memory_unmap(void* host_virt_addr,
+char __attribute__((visibility("default"),sysv_abi)) custom_memory_unmap(void* host_virt_addr,
                                                               unsigned long length,
                                                               bool is_write,
                                                               unsigned long access_len)
@@ -224,7 +232,7 @@ char __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_memory_unm
     return -1;
   if(host_virt_addr == NULL)
     return -1;
-  if(memcmp(as,&_empty_example) == 0,sizeof(AddressSpace)) {
+  if(memcmp(as,&_empty_example,sizeof(AddressSpace)) == 0) {
     printf("[WARN] address_space_memory is nullptr\n");
     return 0;
   }
@@ -257,18 +265,18 @@ wait_qemu:
     }
 //try memory_region_from_host
     unsigned long offset = 0;
-    MemoryRegion* mr = memory_regoin_from_host(cur_node->start_addr,&offset);
+    MemoryRegion* mr = memory_region_from_host(cur_node->start_addr,&offset);
     if(mr == NULL) {
       goto rollback;
     }
     cur_node = cur_node->next;
   }
-  retrun true;
+  return true;
 rollback:
   cur_node = &head;
-  static struct __custom_table prev_node = (&head)->next;
+  struct __custom_table* prev_node = (&head)->next;
   cur_node = cur_node->next;
-  cur_node = cur_node->next;
+  cur_node = cur_node->next; //twice
   while(true) {
     free(prev_node);
     prev_node = cur_node;
@@ -290,7 +298,7 @@ rollback:
   trust the init_ptr,but do not trust the content
 */
 
-bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_init_monitor(struct {  void* next;  void* start_addr;  _Alignas(8) char ignoreme; _Alignas(8) char ignoreme2 }* init_ptr)
+bool __attribute__((visibility("default"),sysv_abi)) custom_request_init_monitor(struct {  void* next;  void* start_addr;  _Alignas(8) char ignoreme; _Alignas(8) char ignoreme2 }* init_ptr)
 //init_ptr never be NULL,ignore the length(ptr) and type
 {
 #ifdef _CONCURRENCY_ASSHOLE
@@ -358,16 +366,16 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
 //todo custom_request_init_monitor using global_rpc_mr check the monitor and initialize context
 
 
-static void custom_internal_cleanup(struct __custom_table* matched_node) {
-  if(matched_node == NULL) {
+static void custom_internal_cleanup(struct __custom_table** matched_node) {
+  if(*matched_node == NULL) {
     return;
   }
-  matched_node->is_monitored = false;
+  (*matched_node)->is_monitored = false;
   return;
 }
 
 //todo custom_request_enter_monitor monitor specificed addr(host virt addr) using memory_region_add_evnetfd call custom_request_notify for accepting an event
-bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_inhabit_monitor(void* addr) {
+bool __attribute__((visibility("default"),sysv_abi)) custom_request_inhabit_monitor(void* addr) {
   if(!is_init) return false;
   if(global_rpc_mr == NULL) return false;
   struct __custom_table* __attribute__((cleanup(custom_internal_cleanup))) matched_node = NULL;
@@ -411,7 +419,7 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
   }
   matched_node->is_monitored = true;
 #endif
-  void* intial_ptr memory_region_get_ram_ptr(global_rpc_mr);
+  void* initial_ptr = memory_region_get_ram_ptr(global_rpc_mr);
   if(initial_ptr == NULL) {
     return false;
   }
@@ -423,8 +431,15 @@ bool __attribute__((gnu::visibility("default"),gnu::sysv_abi)) custom_request_in
   struct pollfd pfd = { .fd = efd, .events = POLLIN };
   unsigned long long _example_data = 0;  
   poll(&pfd, 1, -1);
-  read(efd,&_example_data,8); //可以直接命中
+  int stat = read(efd,&_example_data,8); //可以直接命中
+
   memory_region_del_eventfd(global_rpc_mr,offset,1,true,0,&en);
   event_notifier_cleanup(&en);
+  if(stat < 0)
+    return false;
   return true;
 }
+
+
+
+#pragma GCC diagnostic pop
