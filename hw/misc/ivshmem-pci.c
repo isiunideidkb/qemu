@@ -24,8 +24,6 @@
 #include "hw/pci/pci.h"
 #include "hw/qdev-properties.h"
 #include "hw/qdev-properties-system.h"
-#include "hw/pci/msi.h"
-#include "hw/pci/msix.h"
 #include "system/kvm.h"
 #include "migration/blocker.h"
 #include "migration/vmstate.h"
@@ -76,30 +74,27 @@ struct IVShmemState {
 };
 
 
-//todo 主动生产端
+//readonly,write has no side effect
+static void ivshmem_io_write(void *opaque, hwaddr addr,uint64_t val, unsigned size){
+  printf("[!!HACK!!] WARN DO NOT WRITE BAR0(no size effect)");
+  return;
+}
 
 
-//note 不像host的代码 这里的代码返回并不代表确实发生了通知 因为有太多因素（API）导致的 需要结合Client判断 才可以做到 返回就一定发生了！ 还需要进一步做更多的条件判断
+static unsigned long* consume_shared_v = NULL;
 
-//时序？我觉得大概率绝对是用的ioeventfd 发生后才通知
-static void ivshmem_io_write(void *opaque, hwaddr addr,uint64_t val, unsigned size){}
-
-//生产是一个主动消费的 这个是硬件处理被动执行的回调! 用于兜底 这个offset也是一个全局的! 这个不要加锁 不要解锁 加锁在生产端 解锁在客户端说 0的时候
-//生产永远是主动地尝试写入offset(不计后果)同时 pci_set_irq(pci_dev,1),pci_set_irq(pci_dev,0); 然后硬件收到中断 被动执行ivshmem_io_read ivshmem_io_write_reply
+//readonly
 static uint64_t ivshmem_io_read(void *opaque, hwaddr addr,
                                 unsigned size)
 {
-    //只能从开头读4 8 字节
-    if(size == 1 || size == 2) {
-      printf("[HACK] MMIO received an illegal write,ignored\n");
+    //只能从开头读
+    if(addr != 0) {
+      printf("[!!HACK!!] illegal reading for BAR0(no size effect)");
       return 0;
     }
-    if(addr != 0) { /* todo 高16字节地址的读取处理 代表一些扩展位 但是还没有定义 */
-      printf("[HACK] MMIO received an illegal addr,ignored\n");
-      return 0;
-    }
-    //不要锁住! 不要动锁! 直接 return offset
-    return 0; /* return the offset! 64byte! */
+    //为什么这里是NULL 没有初始化就要abort 后面的reply写入没有初始化的也没有?
+    //不同于write reply，read offset是非常重要的 绝大多数信息的持有者都是我们这边 客户端错误写了 我们可以判断并且忽略 那我错误地发送了呢?这种情况客户端不知道这个回应是否是合法的 并且大概率整个操作都是非法的 需要abort 只需要在这里abort
+    return consume_shared_v ? *consume_shared_v : printf("[!HACK!] FATAL ERROR read for a un-consumed queue"),abort(),0 ;
 }
 static const MemoryRegionOps ivshmem_mmio_ops = {
     .read = ivshmem_io_read,
@@ -111,50 +106,32 @@ static const MemoryRegionOps ivshmem_mmio_ops = {
     },
 };
 
-//一般只有client才会看我有没有置回 1 以及看当前的状态 例如说是 0锁住 还是1松开 如果client读到任何其他的东西 这次的直接忽略 就代表host出错了
+
+//对齐
+static unsigned long client_reply_v = 1;
+
+
+//rw
 static uint64_t io_read_reply(void* opaque,hwaddr addr,unsigned size){
-  //只能从开头读4 字节
-  if(size != 4 || addr != 0) {
-    printf("[HACK] MMIO-reply received an illegal read,ignored\n");
-    abort();
-  }
-  PCIDevice* pci_dev = PCI_DEVICE(opaque);
-  uint64_t bar_hw_addr = pci_bar_address(pci_dev,4,PCI_BASE_ADDRESS_SPACE_MEMORY|PCI_BASE_ADDRESS_MEM_PREFETCH,16);
-  if (bar_hw_addr == PCI_BAR_UNMAPPED) {
-    printf("[!!HACK!!] FATAL ERROR MMIO-reply cannot map BAR4\n");
-    abort();  
-  }
-  unsigned long flag = 0xFFFFFFFFFFFFFFFF;
-  cpu_physical_memory_read(bar_hw_addr,&flag,8); //无法保证一定发生
-  return *flag;
+  if(qddr != 0)
+    return 0;
+  return client_reply_v;
 }
 
-//host写0 然后应该期待立即返回0 如果没有 代表大概率有问题
+//rw
 static void io_write_reply(void *opaque, hwaddr addr,uint64_t val, unsigned size)
 {
   //只能从开头写4 字节
   if(addr != 0 || size != 4){
-    printf("[HACK] MMIO-reply received an illegal write,ignored\n");
+    printf("[HACK] MMIO-reply received an illegal write(no side effect)\n");
     return;
   }
   if(val == 0) {
-    PCIDevice* pci_dev = PCI_DEVICE(opaque);
-    uint64_t bar_hw_addr = pci_bar_address(pci_dev,4,PCI_BASE_ADDRESS_SPACE_MEMORY|PCI_BASE_ADDRESS_MEM_PREFETCH,16);
-    if (bar_hw_addr == PCI_BAR_UNMAPPED) {
-      printf("[!!HACK!!] FATAL ERROR MMIO-reply cannot map BAR4 to resume the Flag! \n");
-      abort();
-    }
-    unsigned long resume_data = 1; //重新恢复到1
-    cpu_physical_memory_write(bar_hw_addr,&resume_data,8);
+    //    client_reply_v = 1; //resume 实际上我们压根不需要这个
     
-    bar_hw_addr = pci_bar_address(pci_dev,0,PCI_BASE_ADDRESS_SPACE_MEMORY|PCI_BASE_ADDRESS_MEM_TYPE_64|PCI_BASE_ADDRESS_MEM_PREFETCH,16);
-    if (bar_hw_addr == PCI_BAR_UNMAPPED) {
-      printf("[!!HACK!!] FATAL ERROR MMIO-reply cannot map BAR4 to resume the Flag! \n");
-      abort();
-    }    
-    resume_data = 0;
-    cpu_physical_memory_write(bar_hw_addr,&resume_data,8); //无法保证一定发生
-    /* release lock */  
+    //todo event_queue.return_back_and_drop(consume_shared_v);
+    //todo 如果本身就没有消费你就先来了 打印警告(no side effect) 就是不需要去notify wait_client_writeback了
+    //todo notify wait_client_writeback
   }
 }
 static const MemoryRegionOps ivshmem_mmio_ops_reply = {
@@ -169,26 +146,28 @@ static const MemoryRegionOps ivshmem_mmio_ops_reply = {
 
 
 /*
-  客户端编写指南  大致伪代码
+  客户端编写指南  大致伪代码 i386
   客户端在接收到中断后 可以尝试
-  void give_up_times = 20;
+  atomic if == using cmpxchg or xchg
+  bool is_init = false;
+  unsigned int old_v;
+  unsigned short giveup_time = 5;
   void handle_interrupt() {
-  retry:
-    give_up_times -= 1;
-    if(give_up_times == 0)
-      //give up
-    bar = read(addr_of_bar0);
-    if(0 == bar)
-      goto retry;
-    //存储bar
-    if(read(addr_of_bar4) != 1) {
-      if(read(addr_of_bar4) == 0xFFFFFFFF) //host的读发生失败了 略过这个
-        exit;
-      else if read(addr_of_bar4) != 1//有两种可能 不知道哪个乱写 写1直接 清空 
-        write(addr_of_bar4,1), FATAL_WARNING("");
-      else
-        write(); //this is nortmal
+head:
+    if(giveup_time == 0)
+      //giveup
+    atomic if(!is_init)
+      bar0,old_v = read(addr_of_bar0);
+      is_init = 1;
+    else {
+      bar0 = read(addr_of_bar0);
+      if(old_v == bar0)
+        giveup_time--, goto head;
+      old_v = bar0;
+      giveup_time = 5;
     }
+    //存储bar
+    //write(1,addr_of_bar4)
     //cmpxchg : 判断这个地址是否真的是1 如果是 就的确放到FIFO 事件正式成功 不是 直接out 但是还是需要LOG警告出来的 因为miss了 只有可能是清理失败了 没有报错然后用之前的 正好失败
     //对于这种情况 写入失败了 这个offset大概率也停摆了 直接BSOD 遇到不一样的直接BSOD
   }
